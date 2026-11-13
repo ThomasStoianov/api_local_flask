@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard da Biblioteca</title>
+<style>
+:root{--bg:#f4f1ec;--card:#fff;--ink:#1f2a37;--mut:#6b7280;--acc:#b4532a;--acc2:#2f6f6a;--line:#e5e0d8}
+@media (prefers-color-scheme:dark){:root{--bg:#16181d;--card:#20242b;--ink:#e8e6e1;--mut:#9aa0aa;--acc:#e08a5b;--acc2:#5fb3ab;--line:#31363f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,'Times New Roman',serif}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:22px 28px}
+h1{margin:0;font-size:1.6rem}
+h2{margin:0 0 14px;font-size:1.05rem}
+button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+main{padding:0 28px 32px;max-width:1200px;margin:auto}
+#aviso{display:none;margin:0 28px 16px;padding:10px 14px;border-radius:8px;background:#fff3cd;color:#5c4400;font-family:system-ui,sans-serif;font-size:.9rem}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+.kpi b{display:block;font-size:2rem;color:var(--acc)}
+.kpi span{color:var(--mut);font-family:system-ui,sans-serif;font-size:.85rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:14px}
+.bar{display:grid;grid-template-columns:130px 1fr 30px;gap:8px;align-items:center;margin:7px 0;font-family:system-ui,sans-serif;font-size:.85rem}
+.bar i{display:block;height:14px;border-radius:4px;background:var(--acc2)}
+.bar .l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cols{display:flex;align-items:flex-end;gap:10px;height:170px;overflow-x:auto;padding-top:10px}
+.col{flex:1;min-width:38px;text-align:center;font-family:system-ui,sans-serif;font-size:.75rem}
+.col i{display:block;background:var(--acc);border-radius:4px 4px 0 0;margin-bottom:4px}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-family:system-ui,sans-serif;font-size:.88rem}
+th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600}
+input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%;max-width:280px;margin-bottom:10px;font:inherit}
+.tag{padding:2px 8px;border-radius:10px;font-size:.75rem}
+.ab{background:#fde4d6;color:#8a3a14}.ok{background:#d8efe9;color:#1d5a53}
+.vazio{color:var(--mut);font-family:system-ui,sans-serif}
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 Dashboard da Biblioteca</h1>
+  <button onclick="carregar()">Atualizar</button>
+</header>
+<div id="aviso"></div>
+<main>
+  <section class="kpis" id="kpis"></section>
+  <section class="grid">
+    <div class="card"><h2>Empréstimos por mês</h2><div class="cols" id="meses"></div></div>
+    <div class="card"><h2>Livros mais emprestados</h2><div id="topLivros"></div></div>
+    <div class="card"><h2>Membros mais ativos</h2><div id="topMembros"></div></div>
+    <div class="card"><h2>Livros por autor</h2><div id="porAutor"></div></div>
+  </section>
+  <section class="card">
+    <h2>Empréstimos</h2>
+    <input id="busca" placeholder="Buscar por livro, membro ou data…" oninput="tabela()">
+    <div class="tw"><table><thead><tr><th>#</th><th>Livro</th><th>Membro</th><th>Empréstimo</th><th>Devolução</th><th>Status</th></tr></thead><tbody id="tbody"></tbody></table></div>
+  </section>
+</main>
+
+<script>
+const API = 'http://localhost:7000/biblioteca';
+let D = {autores:[],livros:[],membros:[],emprestimos:[]};
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const vazia = d => !d || d === 'None' || d === 'null';
+const contar = (arr, chave) => arr.reduce((m, x) => (m[x[chave]] = (m[x[chave]] || 0) + 1, m), {});
+
+async function pegar(rota, chave){
+  const r = await fetch(`${API}/${rota}`);
+  if(!r.ok) throw new Error(rota + ' → ' + r.status);
+  return (await r.json())[chave];
+}
+
+async function carregar(){
+  const aviso = document.getElementById('aviso');
+  try{
+    const [autores, livros, membros, emprestimos] = await Promise.all([
+      pegar('autores','autores'), pegar('livros','livros'),
+      pegar('membros','membros'), pegar('emprestimos/','emprestimos')
+    ]);
+    D = {autores, livros, membros, emprestimos};
+    aviso.style.display = 'none';
+  }catch(e){
+    D = demo();
+    aviso.style.display = 'block';
+    aviso.textContent = 'Não consegui acessar a API (' + e.message + '). Mostrando dados de demonstração. Veja as instruções de CORS.';
+  }
+  render();
+}
+
+function barras(el, pares, vazioMsg){
+  const max = Math.max(1, ...pares.map(p => p[1]));
+  document.getElementById(el).innerHTML = pares.length
+    ? pares.map(([n,v]) => `<div class="bar"><span class="l" title="${esc(n)}">${esc(n)}</span><i style="width:${v/max*100}%"></i><b>${v}</b></div>`).join('')
+    : `<p class="vazio">${vazioMsg}</p>`;
+}
+
+function render(){
+  const {autores, livros, membros, emprestimos} = D;
+  const abertos = emprestimos.filter(e => vazia(e.data_devolucao)).length;
+
+  document.getElementById('kpis').innerHTML = [
+    ['Autores', autores.length], ['Livros', livros.length], ['Membros', membros.length],
+    ['Empréstimos', emprestimos.length], ['Sem devolução', abertos]
+  ].map(([n,v]) => `<div class="card kpi"><b>${v}</b><span>${n}</span></div>`).join('');
+
+  // empréstimos por mês
+  const meses = contar(emprestimos.filter(e => !vazia(e.data_emprestimo)).map(e => ({m:e.data_emprestimo.slice(0,7)})), 'm');
+  const ks = Object.keys(meses).sort().slice(-12);
+  const mx = Math.max(1, ...ks.map(k => meses[k]));
+  document.getElementById('meses').innerHTML = ks.length
+    ? ks.map(k => `<div class="col"><i style="height:${meses[k]/mx*120}px"></i>${meses[k]}<br>${k.slice(5)}/${k.slice(2,4)}</div>`).join('')
+    : '<p class="vazio">Sem empréstimos.</p>';
+
+  const nomeLivro = id => (livros.find(l => l.id_livro === id) || {}).titulo || '#' + id;
+  const nomeMembro = id => (membros.find(m => m.id_membro === id) || {}).nome || '#' + id;
+  const nomeAutor = id => (autores.find(a => a.id_autor === id) || {}).nome || '#' + id;
+  const top = (obj, fn) => Object.entries(obj).map(([k,v]) => [fn(+k), v]).sort((a,b) => b[1]-a[1]).slice(0,6);
+
+  barras('topLivros', top(contar(emprestimos,'id_livro'), nomeLivro), 'Sem dados.');
+  barras('topMembros', top(contar(emprestimos,'id_membro'), nomeMembro), 'Sem dados.');
+  barras('porAutor', top(contar(livros,'id_autor'), nomeAutor), 'Sem dados.');
+
+  window._n = {nomeLivro, nomeMembro};
+  tabela();
+}
+
+function tabela(){
+  const q = document.getElementById('busca').value.toLowerCase();
+  const {nomeLivro, nomeMembro} = window._n;
+  const linhas = [...D.emprestimos]
+    .sort((a,b) => String(b.data_emprestimo).localeCompare(String(a.data_emprestimo)))
+    .map(e => ({e, livro: nomeLivro(e.id_livro), membro: nomeMembro(e.id_membro)}))
+    .filter(x => (x.livro + x.membro + x.e.data_emprestimo + x.e.data_devolucao).toLowerCase().includes(q))
+    .slice(0, 50);
+  document.getElementById('tbody').innerHTML = linhas.map(({e, livro, membro}) => {
+    const ab = vazia(e.data_devolucao);
+    return `<tr><td>${e.id_emprestimo}</td><td>${esc(livro)}</td><td>${esc(membro)}</td><td>${esc(e.data_emprestimo)}</td><td>${ab ? '—' : esc(e.data_devolucao)}</td><td><span class="tag ${ab ? 'ab' : 'ok'}">${ab ? 'Sem devolução' : 'Devolvido'}</span></td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="vazio">Nada encontrado.</td></tr>';
+}
+
+function demo(){
+  const autores = [[1,'Machado de Assis'],[2,'Clarice Lispector'],[3,'Jorge Amado']].map(([id_autor,nome]) => ({id_autor,nome}));
+  const livros = [[1,'Dom Casmurro',1],[2,'Memórias Póstumas',1],[3,'A Hora da Estrela',2],[4,'Gabriela',3],[5,'Capitães da Areia',3]].map(([id_livro,titulo,id_autor]) => ({id_livro,titulo,id_autor}));
+  const membros = [[1,'Ana'],[2,'Bruno'],[3,'Carla'],[4,'Diego']].map(([id_membro,nome]) => ({id_membro,nome}));
+  const datas = ['2026-06-03','2026-06-18','2026-07-09','2026-08-12','2026-08-25','2026-09-05','2026-09-20','2026-10-02','2026-10-15','2026-11-01'];
+  const emprestimos = datas.map((d,i) => ({id_emprestimo:i+1, id_membro:(i*3)%4+1, id_livro:(i*2)%5+1, data_emprestimo:d, data_devolucao: i%3 === 0 ? 'None' : '2026-11-05'}));
+  return {autores, livros, membros, emprestimos};
+}
+
+carregar();
+</script>
+</body>
+</html>
